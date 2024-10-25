@@ -8,8 +8,12 @@ app.use(express.json());
 app.post('/api/chat', async (req, res) => {
   try {
     const { message } = req.body;
-    console.log('Received message:', message);
     
+    // Set up streaming headers
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
     const response = await fetch('http://localhost:11434/api/chat', {
       method: 'POST',
       headers: {
@@ -17,7 +21,7 @@ app.post('/api/chat', async (req, res) => {
       },
       body: JSON.stringify({
         model: "llama3.2",
-        stream: false,
+        stream: true,  // Enable streaming from Ollama
         messages: [{
           role: "user",
           content: message
@@ -25,26 +29,23 @@ app.post('/api/chat', async (req, res) => {
       }),
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Ollama API error:', errorText);
-      throw new Error(`Ollama API responded with status ${response.status}: ${errorText}`);
+    // Stream the response
+    for await (const chunk of response.body) {
+      const text = new TextDecoder().decode(chunk);
+      try {
+        const json = JSON.parse(text);
+        if (json.message?.content) {
+          res.write(`data: ${JSON.stringify({ content: json.message.content })}\n\n`);
+        }
+      } catch (e) {
+        console.error('Error parsing chunk:', e);
+      }
     }
-
-    const data = await response.json();
-    console.log('Ollama response:', data);
-
-    if (!data.message) {
-      throw new Error('Unexpected response format from Ollama');
-    }
-
-    res.json({ response: data.message.content });
+    
+    res.end();
   } catch (error) {
-    console.error('Detailed error:', error);
-    res.status(500).json({ 
-      error: 'Failed to communicate with Ollama',
-      details: error.message 
-    });
+    console.error('Error:', error);
+    res.status(500).json({ error: 'Failed to communicate with Ollama' });
   }
 });
 
@@ -82,3 +83,4 @@ app.listen(PORT, () => {
     console.error('Error connecting to Ollama:', error.message);
   });
 });
+
